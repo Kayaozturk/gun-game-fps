@@ -62,6 +62,7 @@ function startGame(username){
         players = data.players;
         weapons = data.weapons;
         ammo = weapons[currentWeapon].ammo;
+           createGunModel(currentWeapon); // add this line
         updateAmmoDisplay();
         buildMap(data.map);
         Object.keys(data.players).forEach(id => {
@@ -233,35 +234,13 @@ function buildMap(mapName){
 function getIslandData(mapName){
     const maps = {
         islands1: [
-            {x:0, y:0, z:0, radius:10, color:0x8B6914},
-            {x:25, y:5, z:10, radius:7, color:0x8B6914},
-            {x:-20, y:3, z:15, radius:8, color:0x7a5c10},
-            {x:15, y:-3, z:-20, radius:6, color:0x8B6914},
-            {x:-15, y:7, z:-15, radius:9, color:0x6b4f0e},
-            {x:35, y:2, z:-10, radius:5, color:0x8B6914},
-            {x:-35, y:4, z:5, radius:6, color:0x8B6914},
-            {x:5, y:8, z:35, radius:7, color:0x7a5c10},
+            {x:0, y:0, z:0, radius:40, color:0x8B6914},
         ],
         islands2: [
-            {x:0, y:0, z:0, radius:12, color:0x8B6914},
-            {x:30, y:8, z:0, radius:6, color:0x8B6914},
-            {x:-30, y:-2, z:0, radius:8, color:0x7a5c10},
-            {x:0, y:5, z:30, radius:7, color:0x8B6914},
-            {x:0, y:-4, z:-30, radius:9, color:0x6b4f0e},
-            {x:20, y:3, z:20, radius:5, color:0x8B6914},
-            {x:-20, y:6, z:-20, radius:6, color:0x8B6914},
-            {x:-20, y:2, z:20, radius:5, color:0x7a5c10},
+            {x:0, y:0, z:0, radius:40, color:0x8B6914},
         ],
         islands3: [
-            {x:0, y:0, z:0, radius:8, color:0x8B6914},
-            {x:15, y:3, z:15, radius:8, color:0x8B6914},
-            {x:-15, y:3, z:15, radius:8, color:0x7a5c10},
-            {x:15, y:3, z:-15, radius:8, color:0x8B6914},
-            {x:-15, y:3, z:-15, radius:8, color:0x6b4f0e},
-            {x:30, y:6, z:0, radius:6, color:0x8B6914},
-            {x:-30, y:6, z:0, radius:6, color:0x8B6914},
-            {x:0, y:6, z:30, radius:6, color:0x7a5c10},
-            {x:0, y:6, z:-30, radius:6, color:0x8B6914},
+            {x:0, y:0, z:0, radius:40, color:0x8B6914},
         ]
     };
     return maps[mapName] || maps['islands1'];
@@ -481,6 +460,7 @@ function switchWeapon(weapon){
     currentWeapon = weapon;
     document.getElementById('currentWeapon').textContent = weapon.toUpperCase();
     updateAmmoDisplay();
+    createGunModel(weapon);
     socket.emit('switchWeapon', { weapon: weapon });
 }
 
@@ -491,9 +471,15 @@ function updateHealthBar(){
 }
 
 function updateAmmoDisplay(){
-    const a = currentWeapon === 'glock' ? glockAmmo : ammo;
-    const max = weapons[currentWeapon] ? weapons[currentWeapon].maxAmmo : '∞';
-    document.getElementById('ammoCount').textContent = a === Infinity ? '∞' : a + '/' + max;
+    let displayAmmo;
+    if(currentWeapon === 'spellbook'){
+        displayAmmo = '∞/∞';
+    } else if(currentWeapon === 'glock'){
+        displayAmmo = glockAmmo + '/' + (weapons['glock'] ? weapons['glock'].maxAmmo : 15);
+    } else {
+        displayAmmo = ammo + '/' + (weapons[currentWeapon] ? weapons[currentWeapon].maxAmmo : '?');
+    }
+    document.getElementById('ammoCount').textContent = displayAmmo;
     document.getElementById('currentWeapon').textContent = currentWeapon.toUpperCase();
 }
 
@@ -547,11 +533,16 @@ function animate(){
         camera.position.y += velocity.y * delta;
 
         // Void death
-        if(camera.position.y < -60){
-            camera.position.set(0, 5, 0);
-            velocity.y = 0;
-        }
-
+      if(camera.position.y < -60){
+    // Fell off map, go back to lobby
+    document.getElementById('gameContainer').style.display = 'none';
+    document.getElementById('lobby').style.display = 'flex';
+    if(socket) socket.disconnect();
+    camera.position.set(0, 5, 0);
+    velocity.y = 0;
+    isLocked = false;
+    document.exitPointerLock();
+}
         // Island collision
         canJump = false;
         const islandData = getIslandData(currentMapName || 'islands1');
@@ -581,4 +572,73 @@ function animate(){
     }
 
     renderer.render(scene, camera);
+}
+
+function createGunModel(weaponName){
+    // Remove old gun
+    if(camera.getObjectByName('gunModel')){
+        camera.remove(camera.getObjectByName('gunModel'));
+    }
+
+    const group = new THREE.Group();
+    group.name = 'gunModel';
+
+    let color = 0x333333;
+    if(weaponName === 'spellbook') color = 0x8B0000;
+    if(weaponName === 'rpg') color = 0x556B2F;
+    if(weaponName === 'sniper') color = 0x222222;
+
+    if(weaponName === 'spellbook'){
+        // Book shape
+        const bookGeo = new THREE.BoxGeometry(0.15, 0.2, 0.05);
+        const bookMat = new THREE.MeshLambertMaterial({ color: 0x8B0000 });
+        const book = new THREE.Mesh(bookGeo, bookMat);
+        group.add(book);
+        // Glowing orb on top
+        const orbGeo = new THREE.SphereGeometry(0.04, 8, 8);
+        const orbMat = new THREE.MeshLambertMaterial({ color: 0xff4400, emissive: 0xff2200 });
+        const orb = new THREE.Mesh(orbGeo, orbMat);
+        orb.position.set(0, 0.15, 0);
+        group.add(orb);
+    } else if(weaponName === 'rpg'){
+        // Tube shape
+        const tubeGeo = new THREE.CylinderGeometry(0.04, 0.04, 0.4, 8);
+        const tubeMat = new THREE.MeshLambertMaterial({ color: 0x556B2F });
+        const tube = new THREE.Mesh(tubeGeo, tubeMat);
+        tube.rotation.z = Math.PI / 2;
+        group.add(tube);
+    } else {
+        // Generic gun shape - barrel
+        const barrelGeo = new THREE.BoxGeometry(0.04, 0.04, 0.3);
+        const barrelMat = new THREE.MeshLambertMaterial({ color: color });
+        const barrel = new THREE.Mesh(barrelGeo, barrelMat);
+        barrel.position.z = -0.1;
+        group.add(barrel);
+        // Body
+        const bodyGeo = new THREE.BoxGeometry(0.06, 0.08, 0.15);
+        const bodyMat = new THREE.MeshLambertMaterial({ color: color });
+        const body = new THREE.Mesh(bodyGeo, bodyMat);
+        body.position.set(0, -0.03, 0.05);
+        group.add(body);
+        // Handle
+        const handleGeo = new THREE.BoxGeometry(0.05, 0.1, 0.05);
+        const handleMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
+        const handle = new THREE.Mesh(handleGeo, handleMat);
+        handle.position.set(0, -0.09, 0.08);
+        group.add(handle);
+        // Make sniper longer
+        if(weaponName === 'sniper'){
+            barrel.scale.z = 2;
+            barrel.position.z = -0.2;
+        }
+        // Make smg shorter
+        if(weaponName === 'smg'){
+            barrel.scale.z = 0.7;
+        }
+    }
+
+    // Position in bottom right of view
+    group.position.set(0.15, -0.15, -0.3);
+    camera.add(group);
+    scene.add(camera);
 }
