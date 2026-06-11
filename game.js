@@ -348,12 +348,9 @@ function setupControls(){
             case 'KeyS': moveBack = true; break;
             case 'KeyA': moveLeft = true; break;
             case 'KeyD': moveRight = true; break;
-            case 'Space':
-    if(jumps < 2 && alive){
-        velocity.y = 8;   // strong jump
-        jumps++;
-    }
-    break;
+            case 'Space': 
+                if(canJump){ velocity.y += 8; canJump = false; }
+                break;
             case 'KeyR': reload(); break;
             case 'Digit1': switchWeapon(currentWeapon); break;
             case 'Digit2': switchWeapon('glock'); break;
@@ -555,13 +552,11 @@ function animate(){
             const dz = camera.position.z - island.z;
             const dist = Math.sqrt(dx*dx + dz*dz);
             const islandTop = island.y + 1.8;
-           if(dist < island.radius && camera.position.y <= islandTop + 2 && velocity.y <= 0){
-    camera.position.y = islandTop + 1.8;
-    velocity.y = 0;
-    canJump = true;
-    jumps = 0;   // reset double jump
-}
-
+            if(dist < island.radius && camera.position.y <= islandTop + 2 && velocity.y <= 0){
+                camera.position.y = islandTop + 1.8;
+                velocity.y = 0;
+                canJump = true;
+            }
         });
 
         // Send position
