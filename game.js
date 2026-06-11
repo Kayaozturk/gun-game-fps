@@ -25,7 +25,7 @@ let lastShot = 0;
 let health = 100;
 let alive = true;
 let isShooting = false;
-
+let currentMapName = "islands1";
 // Setup skin picker
 const skinPicker = document.getElementById('skinPicker');
 SKINS.forEach((color, i) => {
@@ -183,6 +183,7 @@ function initThree(){
 }
 
 function buildMap(mapName){
+    currentmapname = mapName;
     // Clear existing map
     scene.children = scene.children.filter(c => c.isLight);
 
@@ -337,21 +338,28 @@ function showBulletTrail(origin, direction){
 }
 
 function setupControls(){
-    // Pointer lock
     const canvas = document.getElementById('gameCanvas');
+    
+    // Pointer lock
     canvas.addEventListener('click', () => {
-        if(!isLocked) canvas.requestPointerLock();
+        if(!isLocked && alive) canvas.requestPointerLock();
     });
 
     document.addEventListener('pointerlockchange', () => {
         isLocked = document.pointerLockElement === canvas;
     });
 
+    let yaw = 0;
+    let pitch = 0;
+
     document.addEventListener('mousemove', (e) => {
         if(!isLocked || !alive) return;
-        camera.rotation.y -= e.movementX * 0.002;
-        camera.rotation.x -= e.movementY * 0.002;
-        camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+        yaw -= e.movementX * 0.002;
+        pitch -= e.movementY * 0.002;
+        pitch = Math.max(-Math.PI/2 + 0.01, Math.min(Math.PI/2 - 0.01, pitch));
+        camera.rotation.order = 'YXZ';
+        camera.rotation.y = yaw;
+        camera.rotation.x = pitch;
     });
 
     document.addEventListener('keydown', (e) => {
@@ -379,7 +387,7 @@ function setupControls(){
     });
 
     document.addEventListener('mousedown', (e) => {
-        if(e.button === 0 && isLocked && alive) {
+        if(e.button === 0 && isLocked && alive){
             isShooting = true;
             shoot();
         }
@@ -511,59 +519,55 @@ function animate(){
     requestAnimationFrame(animate);
 
     const time = performance.now();
-    const delta = (time - prevTime) / 1000;
+    const delta = Math.min((time - prevTime) / 1000, 0.1);
     prevTime = time;
 
     if(isLocked && alive){
         // Gravity
-        velocity.y -= 9.8 * delta;
+        velocity.y -= 20 * delta;
 
-        direction.z = Number(moveForward) - Number(moveBack);
-        direction.x = Number(moveRight) - Number(moveLeft);
-        direction.normalize();
+        // Get movement direction based on camera facing
+        const forward = new THREE.Vector3(-Math.sin(camera.rotation.y), 0, -Math.cos(camera.rotation.y));
+        const right = new THREE.Vector3(Math.cos(camera.rotation.y), 0, -Math.sin(camera.rotation.y));
 
-        const speed = 10;
-        if(moveForward || moveBack){
-            velocity.z -= direction.z * speed * delta;
+        const speed = 8;
+        const moveVec = new THREE.Vector3();
+
+        if(moveForward) moveVec.add(forward);
+        if(moveBack) moveVec.sub(forward);
+        if(moveRight) moveVec.add(right);
+        if(moveLeft) moveVec.sub(right);
+
+        if(moveVec.length() > 0){
+            moveVec.normalize().multiplyScalar(speed * delta);
         }
-        if(moveLeft || moveRight){
-            velocity.x -= direction.x * speed * delta;
-        }
 
-        // Apply movement relative to camera direction
-        const moveX = -Math.sin(camera.rotation.y) * (-velocity.z * delta) + Math.cos(camera.rotation.y) * (-velocity.x * delta);
-        const moveZ = Math.cos(camera.rotation.y) * (-velocity.z * delta) + Math.sin(camera.rotation.y) * (-velocity.x * delta);
-
-        camera.position.x += moveX;
-        camera.position.z += moveZ;
+        camera.position.x += moveVec.x;
+        camera.position.z += moveVec.z;
         camera.position.y += velocity.y * delta;
 
-        // Simple ground check - stop falling below y=-50 (void)
-        if(camera.position.y < -50){
-            // Fell off, respawn position (server will handle proper respawn)
-            camera.position.y = -50;
+        // Void death
+        if(camera.position.y < -60){
+            camera.position.set(0, 5, 0);
             velocity.y = 0;
         }
 
-        // Simple island collision - check if on any island
+        // Island collision
         canJump = false;
-        const islandData = getIslandData('islands1');
+        const islandData = getIslandData(currentMapName || 'islands1');
         islandData.forEach(island => {
             const dx = camera.position.x - island.x;
             const dz = camera.position.z - island.z;
             const dist = Math.sqrt(dx*dx + dz*dz);
             const islandTop = island.y + 1.8;
-            if(dist < island.radius && camera.position.y < islandTop + 2 && camera.position.y > islandTop - 1){
+            if(dist < island.radius && camera.position.y <= islandTop + 2 && velocity.y <= 0){
                 camera.position.y = islandTop + 1.8;
                 velocity.y = 0;
                 canJump = true;
             }
         });
 
-        velocity.x *= 0.9;
-        velocity.z *= 0.9;
-
-        // Send position to server
+        // Send position
         if(socket){
             socket.emit('move', {
                 x: camera.position.x,
