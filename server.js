@@ -7,15 +7,17 @@ const app = express();
 const server = http.createServer(app);
 const io = socketio(server);
 
+app.use((req, res, next) => {
+    res.setHeader("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;");
+    next();
+});
+
 app.use(express.static(path.join(__dirname)));
 
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'index.html'));
 });
-app.use((req, res, next) => {
-    res.setHeader("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval' data: blob:;");
-    next();
-});
+
 const PORT = process.env.PORT || 3000;
 
 const WEAPONS = {
@@ -59,12 +61,13 @@ io.on('connection', (socket) => {
             socket.emit('serverFull');
             return;
         }
+        let weapon = WEAPONS[data.weapon] ? data.weapon : 'ar';
         let spawn = getSpawnPoint();
         players[socket.id] = {
             id: socket.id,
             username: data.username,
             skin: data.skin,
-            weapon: data.weapon,
+            weapon: weapon,
             x: spawn.x,
             y: spawn.y,
             z: spawn.z,
@@ -72,7 +75,7 @@ io.on('connection', (socket) => {
             health: 100,
             kills: 0,
             deaths: 0,
-            ammo: WEAPONS[data.weapon].ammo,
+            ammo: WEAPONS[weapon].ammo,
             glockAmmo: WEAPONS['glock'].ammo,
             alive: true
         };
@@ -103,8 +106,8 @@ io.on('connection', (socket) => {
 
     socket.on('shoot', (data) => {
         if(!players[socket.id] || !players[socket.id].alive) return;
+        let weapon = WEAPONS[data.weapon] ? data.weapon : 'ar';
         if(data.hit && players[data.hit]){
-            let weapon = data.weapon;
             let damage = WEAPONS[weapon].damage;
             if(data.headshot) damage *= 2;
             players[data.hit].health -= damage;
@@ -153,14 +156,14 @@ io.on('connection', (socket) => {
         }
         socket.broadcast.emit('playerShot', {
             id: socket.id,
-            weapon: data.weapon,
+            weapon: weapon,
             origin: data.origin,
             direction: data.direction
         });
     });
 
     socket.on('switchWeapon', (data) => {
-        if(players[socket.id]){
+        if(players[socket.id] && WEAPONS[data.weapon]){
             players[socket.id].weapon = data.weapon;
             socket.broadcast.emit('playerSwitchedWeapon', {
                 id: socket.id,

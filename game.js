@@ -17,6 +17,7 @@ let direction = new THREE.Vector3();
 let prevTime = performance.now();
 let isLocked = false;
 let currentWeapon = 'ar';
+let primaryWeapon = 'ar';
 let weapons = {};
 let ammo = 30;
 let glockAmmo = 15;
@@ -48,6 +49,7 @@ document.getElementById('joinBtn').addEventListener('click', () => {
         return;
     }
     currentWeapon = document.getElementById('weaponSelect').value;
+    primaryWeapon = currentWeapon;
     startGame(username);
 });
 
@@ -63,7 +65,7 @@ function startGame(username){
         players = data.players;
         weapons = data.weapons;
         ammo = weapons[currentWeapon].ammo;
-           createGunModel(currentWeapon); // add this line
+        createGunModel(currentWeapon);
         updateAmmoDisplay();
         buildMap(data.map);
         Object.keys(data.players).forEach(id => {
@@ -127,7 +129,7 @@ function startGame(username){
     socket.on('respawn', (pos) => {
         alive = true;
         health = 100;
-        ammo = weapons[currentWeapon].ammo;
+        ammo = weapons[currentWeapon] ? weapons[currentWeapon].ammo : ammo;
         glockAmmo = weapons['glock'].ammo;
         updateHealthBar();
         updateAmmoDisplay();
@@ -164,6 +166,7 @@ function initThree(){
 
     camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
     camera.position.set(0, 5, 0);
+    scene.add(camera);
 
     renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('gameCanvas'), antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -185,13 +188,14 @@ function initThree(){
 }
 
 function buildMap(mapName){
-    currentmapname = mapName;
-    // Clear existing map
-    scene.children = scene.children.filter(c => c.isLight);
+    currentMapName = mapName;
+    // Clear existing map objects, but keep lights and the camera (gun model lives on it)
+    const toRemove = scene.children.filter(c => !c.isLight && c !== camera);
+    toRemove.forEach(c => scene.remove(c));
 
     // Always build floating islands
     const islandData = getIslandData(mapName);
-    
+
     islandData.forEach(island => {
         // Island platform
         const geo = new THREE.CylinderGeometry(island.radius, island.radius * 0.8, 3, 8);
@@ -223,13 +227,6 @@ function buildMap(mapName){
             Math.random() * 200 - 100
         );
     }
-
-    // Ambient lighting re-add
-    const ambient = new THREE.AmbientLight(0xffffff, 0.6);
-    scene.add(ambient);
-    const sun = new THREE.DirectionalLight(0xffffff, 1);
-    sun.position.set(50, 100, 50);
-    scene.add(sun);
 }
 
 function getIslandData(mapName){
@@ -319,7 +316,7 @@ function showBulletTrail(origin, direction){
 
 function setupControls(){
     const canvas = document.getElementById('gameCanvas');
-    
+
     // Pointer lock
     canvas.addEventListener('click', () => {
         if(!isLocked && alive) canvas.requestPointerLock();
@@ -348,11 +345,11 @@ function setupControls(){
             case 'KeyS': moveBack = true; break;
             case 'KeyA': moveLeft = true; break;
             case 'KeyD': moveRight = true; break;
-            case 'Space': 
+            case 'Space':
                 if(canJump){ velocity.y += 8; canJump = false; }
                 break;
             case 'KeyR': reload(); break;
-            case 'Digit1': switchWeapon(currentWeapon); break;
+            case 'Digit1': switchWeapon(primaryWeapon); break;
             case 'Digit2': switchWeapon('glock'); break;
         }
     });
@@ -424,7 +421,7 @@ function shoot(){
         headshot: headshot,
         weapon: currentWeapon,
         origin: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
-        direction: { 
+        direction: {
             x: -Math.sin(camera.rotation.y),
             y: Math.sin(camera.rotation.x),
             z: -Math.cos(camera.rotation.y)
@@ -450,7 +447,11 @@ function reload(){
     isReloading = true;
     document.getElementById('reloadIndicator').style.display = 'block';
     setTimeout(() => {
-        ammo = weaponData.maxAmmo;
+        if(currentWeapon === 'glock'){
+            glockAmmo = weaponData.maxAmmo;
+        } else {
+            ammo = weaponData.maxAmmo;
+        }
         isReloading = false;
         document.getElementById('reloadIndicator').style.display = 'none';
         updateAmmoDisplay();
@@ -458,6 +459,7 @@ function reload(){
 }
 
 function switchWeapon(weapon){
+    if(!weapons[weapon] || weapon === currentWeapon) return;
     currentWeapon = weapon;
     document.getElementById('currentWeapon').textContent = weapon.toUpperCase();
     updateAmmoDisplay();
@@ -534,16 +536,17 @@ function animate(){
         camera.position.y += velocity.y * delta;
 
         // Void death
-      if(camera.position.y < -60){
-    // Fell off map, go back to lobby
-    document.getElementById('gameContainer').style.display = 'none';
-    document.getElementById('lobby').style.display = 'flex';
-    if(socket) socket.disconnect();
-    camera.position.set(0, 5, 0);
-    velocity.y = 0;
-    isLocked = false;
-    document.exitPointerLock();
-}
+        if(camera.position.y < -60){
+            // Fell off map, go back to lobby
+            document.getElementById('gameContainer').style.display = 'none';
+            document.getElementById('lobby').style.display = 'flex';
+            if(socket) socket.disconnect();
+            camera.position.set(0, 5, 0);
+            velocity.y = 0;
+            isLocked = false;
+            document.exitPointerLock();
+        }
+
         // Island collision
         canJump = false;
         const islandData = getIslandData(currentMapName || 'islands1');
@@ -641,5 +644,4 @@ function createGunModel(weaponName){
     // Position in bottom right of view
     group.position.set(0.15, -0.15, -0.3);
     camera.add(group);
-    scene.add(camera);
 }
