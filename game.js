@@ -3,6 +3,13 @@ const SKINS = [
     '#1abc9c', '#e67e22', '#e91e63', '#00bcd4', '#8bc34a'
 ];
 
+// The bean model's origin is its FEET, but the position we send/receive over
+// the network is the camera (eye) height. This offset converts eye-height
+// down to feet-height so other players' models stand on the ground instead
+// of floating, and so bullet trails (which originate at eye height) line up
+// with the model's chest/head instead of its feet.
+const PLAYER_MESH_Y_OFFSET = 1.4;
+
 let selectedSkin = SKINS[0];
 let myID = null;
 let myData = null;
@@ -28,6 +35,9 @@ let alive = true;
 let isShooting = false;
 let currentMapName = "islands1";
 let jumps = 0;
+let gameActive = false;
+let animationId = null;
+
 // Setup skin picker
 const skinPicker = document.getElementById('skinPicker');
 SKINS.forEach((color, i) => {
@@ -87,7 +97,7 @@ function startGame(username){
 
     socket.on('playerMoved', (data) => {
         if(otherMeshes[data.id]){
-            otherMeshes[data.id].position.set(data.x, data.y, data.z);
+            otherMeshes[data.id].position.set(data.x, data.y - PLAYER_MESH_Y_OFFSET, data.z);
             otherMeshes[data.id].rotation.y = data.rotY;
         }
     });
@@ -156,10 +166,17 @@ function startGame(username){
     });
 
     setupControls();
+    gameActive = true;
     animate();
 }
 
 function initThree(){
+    // If we're returning from a previous session, dispose the old renderer
+    // so we don't leak WebGL contexts when rejoining from the lobby.
+    if(renderer){
+        renderer.dispose();
+    }
+
     scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87ceeb);
     scene.fog = new THREE.Fog(0x87ceeb, 50, 200);
@@ -213,10 +230,12 @@ function buildMap(mapName){
         grassMesh.position.set(island.x, island.y + 1.5, island.z);
         scene.add(grassMesh);
 
-        // Some trees/rocks on islands
-        if(Math.random() > 0.5){
-            addTreeAt(island.x + Math.random() * 3 - 1.5, island.y + 1.8, island.z + Math.random() * 3 - 1.5);
-        }
+        // Trees - fixed, deterministic positions so every client sees the
+        // same map (previously this used Math.random(), so each client
+        // independently decided whether/where to place a tree).
+        getTreePositions(island).forEach(pos => {
+            addTreeAt(island.x + pos.dx, island.y + 1.8, island.z + pos.dz);
+        });
     });
 
     // Add clouds
@@ -244,6 +263,19 @@ function getIslandData(mapName){
     return maps[mapName] || maps['islands1'];
 }
 
+function getTreePositions(island){
+    // Deterministic tree layout (relative to island center) so the map
+    // looks identical for every player regardless of join order.
+    return [
+        {dx: 10, dz: 10},
+        {dx: -12, dz: 6},
+        {dx: 14, dz: -10},
+        {dx: -8, dz: -14},
+        {dx: 0, dz: 18},
+        {dx: -20, dz: -4}
+    ];
+}
+
 function addTreeAt(x, y, z){
     const trunkGeo = new THREE.CylinderGeometry(0.2, 0.3, 2, 6);
     const trunkMat = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
@@ -265,6 +297,29 @@ function addCloud(x, y, z){
     cloud.position.set(x, y, z);
     cloud.scale.set(1, 0.5, 1);
     scene.add(cloud);
+}
+
+function makeUsernameSprite(username){
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+    ctx.font = 'bold 32px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = 'rgba(0,0,0,0.8)';
+    ctx.fillStyle = '#ffffff';
+    const text = username || 'Player';
+    ctx.strokeText(text, canvas.width / 2, canvas.height / 2);
+    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({ map: texture, depthTest: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(2, 0.5, 1);
+    sprite.position.y = 2.6; // just above the head
+    return sprite;
 }
 
 function addOtherPlayer(playerData){
@@ -295,8 +350,12 @@ function addOtherPlayer(playerData){
     rightEye.position.set(0.15, 1.7, 0.4);
     group.add(rightEye);
 
-    // Username label (simple box above head)
-    group.position.set(playerData.x, playerData.y, playerData.z);
+    // Username label above head
+    group.add(makeUsernameSprite(playerData.username));
+
+    // Convert the eye-height position we receive from the server into a
+    // feet-height position for the model so it stands on the ground.
+    group.position.set(playerData.x, playerData.y - PLAYER_MESH_Y_OFFSET, playerData.z);
     scene.add(group);
     otherMeshes[playerData.id] = group;
 }
@@ -504,8 +563,41 @@ function updateScoreboard(){
     sb.innerHTML = html;
 }
 
+function returnToLobby(){
+    gameActive = false;
+    if(animationId !== null){
+        cancelAnimationFrame(animationId);
+        animationId = null;
+    }
+
+    if(socket){
+        socket.disconnect();
+        socket = null;
+    }
+
+    if(isLocked) document.exitPointerLock();
+    isLocked = false;
+
+    document.getElementById('gameContainer').style.display = 'none';
+    document.getElementById('deathScreen').style.display = 'none';
+    document.getElementById('lobby').style.display = 'flex';
+    document.getElementById('lobbyError').textContent = 'You fell into the void! Rejoin below.';
+
+    // Reset game state so a fresh join starts clean
+    players = {};
+    otherMeshes = {};
+    health = 100;
+    alive = true;
+    isReloading = false;
+    isShooting = false;
+    moveForward = moveBack = moveLeft = moveRight = false;
+    velocity.set(0, 0, 0);
+    document.getElementById('reloadIndicator').style.display = 'none';
+}
+
 function animate(){
-    requestAnimationFrame(animate);
+    if(!gameActive) return;
+    animationId = requestAnimationFrame(animate);
 
     const time = performance.now();
     const delta = Math.min((time - prevTime) / 1000, 0.1);
@@ -535,16 +627,10 @@ function animate(){
         camera.position.z += moveVec.z;
         camera.position.y += velocity.y * delta;
 
-        // Void death
+        // Void death - send player back to the lobby
         if(camera.position.y < -60){
-            // Fell off map, go back to lobby
-            document.getElementById('gameContainer').style.display = 'none';
-            document.getElementById('lobby').style.display = 'flex';
-            if(socket) socket.disconnect();
-            camera.position.set(0, 5, 0);
-            velocity.y = 0;
-            isLocked = false;
-            document.exitPointerLock();
+            returnToLobby();
+            return;
         }
 
         // Island collision
